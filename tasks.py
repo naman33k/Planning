@@ -41,15 +41,16 @@ class PendulumTask:
     self._dynamics_der = jax.jit(jax.jacfwd(_dynamics))
 
     self.Q = np.eye(self.state_size)
-    self.Q = jax.ops.index_update(self.Q,(0, 1),self.pendulum_length)
-    self.Q = jax.ops.index_update(self.Q,(1, 0),self.pendulum_length)
-    self.Q = jax.ops.index_update(self.Q,(0, 0),self.pendulum_length**2)
-    self.Q = jax.ops.index_update(self.Q,(1, 1),self.pendulum_length**2)
+    # self.Q = jax.ops.index_update(self.Q,(0, 1),self.pendulum_length)
+    # self.Q = jax.ops.index_update(self.Q,(1, 0),self.pendulum_length)
+    # self.Q = jax.ops.index_update(self.Q,(0, 0),self.pendulum_length**2)
+    # self.Q = jax.ops.index_update(self.Q,(1, 1),self.pendulum_length**2)
     self.Q = jax.ops.index_update(self.Q,(2, 2),0.0)
     self.Q_terminal = 100 * np.eye(self.state_size)
     self.R = np.array([[0.1]])
 
     def _costval(x, u, i):
+      #print("asa")
       if i == self.h:
         return (x-self.x_goal).T@self.Q_terminal@(x-self.x_goal)
       else:
@@ -64,7 +65,7 @@ class PendulumTask:
     self._cost = _costval
     self._costgrad = _costgrad
 
-  def step(self,x,u,i):
+  def step(self,x,u,i, is_real_dynamics=True):
     return self._dynamics([x,u])
 
   def dynamics_grad(self,x,u,i):

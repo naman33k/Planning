@@ -37,12 +37,20 @@ def LQRSolver(cost_params, d_params, h, state_size, mu=0.0):
     V_xx = 0.5 * (V_xx + V_xx.T)  # To maintain symmetry.
   return list(reversed(sol_k)), list(reversed(sol_K))
 
-def rollout_for_actions(task, old_actions, gains, gainsK, old_pivots, alpha):
+def rollout_for_actions(task, old_actions, gains, gainsK, old_pivots, alpha, mode=1):
+  ## Mode = 1 - real dynamics is used to generate delta.
+  ## Mode = 2 - sim dynamics is used to generate delta.
+  ## Mode = 3 - to be implemented - linear dynamics is used to generate delta.
   states = [task.initial_state]
   new_actions = []
   for j in range(task.h):
     new_action = old_actions[j]+alpha*gains[j]+gainsK[j]@(states[j]-old_pivots[j])
-    states.append(task.step(states[j],new_action,j))
+    if mode==1:
+      states.append(task.step(states[j],new_action,j, is_real_dynamics=True))
+    elif mode==2:
+      states.append(task.step(states[j],new_action,j, is_real_dynamics=False))
+    elif mode==3:
+      raise NotImplementedError
     new_actions.append(new_action)  
   return new_actions
 
@@ -54,7 +62,7 @@ def trajectory_cost(task, actions):
     states.append(task.step(states[j], actions[j], j))
   return cost + task.cost(states[task.h], None, task.h)  
 
-def rollout(task, actions):
+def rollout(task, actions, is_real_dynamics=True):
   states = [task.initial_state] 
   cost_params = []
   d_params = []
@@ -63,7 +71,7 @@ def rollout(task, actions):
     total_cost+= task.cost(states[j], actions[j], j)
     cost_params.append(task.cost_grad(states[j], actions[j],j))
     d_params.append(task.dynamics_grad(states[j], actions[j],j))
-    states.append(task.step(states[j],actions[j],j))
+    states.append(task.step(states[j],actions[j],j, is_real_dynamics))
   total_cost+= task.cost(states[task.h], None, task.h)
   cost_params.append(task.cost_grad(states[task.h], None,task.h))
   return states, cost_params, d_params, total_cost
