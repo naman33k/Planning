@@ -1,7 +1,11 @@
 import jax
 import jax.numpy as np
+import os
+# necessary for rendering
+from gym.envs.classic_control import rendering
 
 class PendulumTask:
+  metadata = {'render.modes' : ['human', 'rgb_array'],'video.frames_per_second' : 30}
   def __init__(self):
     self.min_bounds=-1.0
     self.max_bounds=1.0
@@ -15,6 +19,7 @@ class PendulumTask:
     self.initial_state = self.augment_state(np.array([np.pi, 0.0]))
     self.h = 300
     self.dt = 0.02
+    self.viewer = None
 
     @jax.jit
     def _dynamics(input_val):
@@ -76,3 +81,31 @@ class PendulumTask:
 
   def compress_state(self, x):
     return np.array([np.arctan2(x[0], x[1]), x[2]])
+
+  def render(self, state, mode='human', last_u=None):
+    if self.viewer is None:
+        self.viewer = rendering.Viewer(500,500)
+        self.viewer.set_bounds(-2.2,2.2,-2.2,2.2)
+        rod = rendering.make_capsule(1, .2)
+        rod.set_color(.8, .3, .3)
+        self.pole_transform = rendering.Transform()
+        rod.add_attr(self.pole_transform)
+        self.viewer.add_geom(rod)
+        axle = rendering.make_circle(.05)
+        axle.set_color(0,0,0)
+        self.viewer.add_geom(axle)
+        fname = "clockwise.png"
+        self.img = rendering.Image(fname, 1., 1.)
+        self.imgtrans = rendering.Transform()
+        self.img.add_attr(self.imgtrans)
+
+    self.viewer.add_onetime(self.img)
+    self.pole_transform.set_rotation(np.arctan2(state[0],state[1]) + np.pi/2)
+    if last_u:
+        self.imgtrans.scale = (last_u/2, np.abs(last_u)/2)
+    return self.viewer.render(return_rgb_array = mode=='rgb_array')
+
+  def close(self):
+    if self.viewer:
+        self.viewer.close()
+        self.viewer = None  
