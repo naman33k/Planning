@@ -153,6 +153,7 @@ class PlanarQuadrotor:
         self.observation_space = (self.n,)
         self.initial_state = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
         self.goal_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
         @jax.jit
         def _dynamics(x, u):
             state = x
@@ -169,8 +170,12 @@ class PlanarQuadrotor:
             state_dot = np.array([xdot, ydot, thdot, xddot, yddot, thddot])
             new_state = state + state_dot*dt
             return new_state
+
+        @jax.jit
         def _wind_field(x,y):
             return [self.wind_force*x, self.wind_force*y]
+        self.wind_field = _wind_field
+        
         @jax.jit
         def _dynamics_real(x, u):
             state = x
@@ -196,28 +201,20 @@ class PlanarQuadrotor:
             else:
               return np.linalg.norm(x - self.goal_state)**2 + 0.1*np.linalg.norm(u - self.hover_input)**2
       
-
-    def _costgrad(x,u,i):
-      if i==self.h:
-        return [2*self.Q_terminal@(x - self.x_goal), np.zeros((1,)), 2*self.Q_terminal, np.zeros((self.action_size, self.state_size)), np.zeros((self.action_size, self.action_size))]
-      else:
-        return [2*self.Q@(x-self.x_goal), 2*self.R@u, 2*self.Q, np.zeros((self.action_size,self.state_size)), 2*self.R]
-    
-    self._cost = _costval
-    self._costgrad = _costgrad
-
-
-    def initialize(self):
-        self.initialized = True
-        return self.reset()
+        def _costgrad(x,u,i):
+          if i==self.h:
+            return [2*self.Q_terminal@(x - self.x_goal), np.zeros((1,)), 2*self.Q_terminal, np.zeros((self.action_size, self.state_size)), np.zeros((self.action_size, self.action_size))]
+          else:
+            return [2*self.Q@(x-self.x_goal), 2*self.R@u, 2*self.Q, np.zeros((self.action_size,self.state_size)), 2*self.R]
+        
+        self._cost = _costval
+        self._costgrad = _costgrad
 
     def step(self,u):
         self.last_u = u
         state = self._dynamics(self.state, u)
-        # costs = state[0]**2 + state[1]**2 + state[2]**2 + state[3]**2 + state[4]**2 + state[5]**2 + 0.1*u[0]**2 + 0.1*u[1]**2
-        # costs = 0.0
         self.state = state
-        return self.state # , -costs, False, {}
+        return self.state
 
     def linearize_dynamics(self, x0, u0):
         # Linearize dynamics about x0, u0
@@ -240,6 +237,38 @@ class PlanarQuadrotor:
         self.last_u = np.array([0.0, 0.0])
         return self.state 
 
+    def render(self, state, mode='human', last_u=None):
+        if self.viewer is None:
+            self.viewer = rendering.Viewer(1000,1000)
+            self.viewer.set_bounds(-0.2,1.2,-0.1,1.2)
+            #rod = rendering.make_capsule(1, .2)
+            #rod.set_color(.8, .3, .3)
+            #self.pole_transform = rendering.Transform()
+            #rod.add_attr(self.pole_transform)
+            #self.viewer.add_geom(rod)
+            #axle = rendering.make_circle(.05)
+            #axle.set_color(0,0,0)
+            #self.viewer.add_geom(axle)
+            fname = "drone.png"
+            self.img = rendering.Image(fname, 0.4, 0.2)
+            self.imgtrans = rendering.Transform()
+            self.img.add_attr(self.imgtrans)
+            for i in np.linspace(0, 1., num=10, endpoint=True):
+              for j in np.linspace(0, 1., num=10, endpoint=True):
+                dx, dy = self.wind_field(i, j)
+                size = 0.1*np.sqrt(dx**2 + dy**2)
+                theta = np.arctan2(dy, dx)
+                sin, cos = np.sin(theta), np.cos(theta)
+                self.viewer.draw_line((i, j), (i+size*cos, j+size*cos))
+
+        self.viewer.add_onetime(self.img)
+        self.imgtrans.set_translation(state[0], state[1])
+        self.imgtrans.set_rotation(state[2])
+        #if last_u:
+        #    self.imgtrans.scale = (last_u/2, np.abs(last_u)/2)
+        return self.viewer.render(return_rgb_array = mode=='rgb_array')
+
+    
     def close(self):
         if self.viewer:
             self.viewer.close()
