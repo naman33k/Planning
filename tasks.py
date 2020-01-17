@@ -147,15 +147,16 @@ class PlanarQuadrotor:
         self.g = g
         self.hover_input = np.array([self.m*self.g/2., self.m*self.g/2.])
         self.viewer = None
-        self.action_space = (2,)
-        self.wind_force = 1.
-        self.n = 6
-        self.observation_space = (self.n,)
+        self.action_size = 2
+        self.state_size = 6
+        self.wind_force = 0.
         self.initial_state = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
         self.goal_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.h = 100
 
         @jax.jit
-        def _dynamics(x, u):
+        def _dynamics(inp):
+            x,u = inp
             state = x
             x, y, th, xdot, ydot, thdot = state
             u1, u2 = u
@@ -174,10 +175,11 @@ class PlanarQuadrotor:
         @jax.jit
         def _wind_field(x,y):
             return [self.wind_force*x, self.wind_force*y]
-        self.wind_field = _wind_field
+        self._wind_field = _wind_field
         
         @jax.jit
-        def _dynamics_real(x, u):
+        def _dynamics_real(inp):
+            x,u = inp
             state = x
             x, y, th, xdot, ydot, thdot = state
             u1, u2 = u
@@ -194,36 +196,39 @@ class PlanarQuadrotor:
             new_state = state + state_dot*dt
             return new_state
         self._dynamics = _dynamics
+        self._dynamics_real = _dynamics_real
+        self._dynamics_der = jax.jit(jax.jacfwd(_dynamics))
 
         def _costval(x, u, i):
-            if i==task.h:
+            if i==self.h:
               return 100*np.linalg.norm(x - self.goal_state)**2
             else:
               return np.linalg.norm(x - self.goal_state)**2 + 0.1*np.linalg.norm(u - self.hover_input)**2
       
         def _costgrad(x,u,i):
           if i==self.h:
-            return [2*self.Q_terminal@(x - self.x_goal), np.zeros((1,)), 2*self.Q_terminal, np.zeros((self.action_size, self.state_size)), np.zeros((self.action_size, self.action_size))]
+            return [200*(x - self.goal_state), np.zeros((self.action_size, self.action_size)), 200*np.eye(self.state_size), np.zeros((self.action_size, self.state_size)), np.zeros((self.action_size, self.action_size))]
           else:
-            return [2*self.Q@(x-self.x_goal), 2*self.R@u, 2*self.Q, np.zeros((self.action_size,self.state_size)), 2*self.R]
+            return [2*(x-self.goal_state), 0.2*(u - self.hover_input), 2*np.eye(self.state_size), np.zeros((self.action_size,self.state_size)), 0.2*np.eye(self.action_size)]
         
         self._cost = _costval
         self._costgrad = _costgrad
 
-    def step(self,u):
-        self.last_u = u
-        state = self._dynamics(self.state, u)
-        self.state = state
-        return self.state
+    def step(self,x,u,i, is_real_dynamics=True):
+        if is_real_dynamics:
+          return self._dynamics_real([x,u])
+        else:
+          return self._dynamics([x,u])
 
-    def linearize_dynamics(self, x0, u0):
-        # Linearize dynamics about x0, u0
-        dyn_jacobian = jax.jit(jax.jacrev(self._dynamics, argnums=(0,1))) 
-        F = dyn_jacobian(x0, u0)
-        A = F[0]
-        B = F[1]
-        # F = np.hstack(dyn_jacobian(x0, u0)) 
-        return A, B
+    
+    def dynamics_grad(self,x,u,i):
+        return self._dynamics_der([x,u])
+
+    def cost_grad(self,x,u,i):
+        return self._costgrad(x,u,i)
+
+    def cost(self,x,u,i):
+        return self._cost(x,u,i)
 
     def reset(self):
         x = random.uniform(generate_key(), minval=-0.5, maxval=0.5)
