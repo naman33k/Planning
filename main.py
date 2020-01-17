@@ -5,6 +5,7 @@ from algos import *
 from tasks import *
 
 key = jax.random.PRNGKey(10)
+<<<<<<< HEAD
 # action_size = 1
 # pendulum = PendulumTask()
 # u0 = jax.random.uniform(key, shape=(pendulum.h, action_size), minval=-1.0)
@@ -38,3 +39,5 @@ print(states[-1])
 # 	else:
 # 		pendulum.render(states[i], last_u=final_actions[i-1])
 # 		time.sleep(1. / 20.)
+
+
