@@ -1,3 +1,4 @@
+import pyglet
 import jax
 import jax.numpy as np
 import os
@@ -245,30 +246,24 @@ class PlanarQuadrotor:
     def render(self, state, mode='human', last_u=None):
         if self.viewer is None:
             self.viewer = rendering.Viewer(1000,1000)
-            self.viewer.set_bounds(-0.2,1.2,-0.1,1.2)
-            #rod = rendering.make_capsule(1, .2)
-            #rod.set_color(.8, .3, .3)
-            #self.pole_transform = rendering.Transform()
-            #rod.add_attr(self.pole_transform)
-            #self.viewer.add_geom(rod)
-            #axle = rendering.make_circle(.05)
-            #axle.set_color(0,0,0)
-            #self.viewer.add_geom(axle)
-            fname = "drone.png"
-            self.img = rendering.Image(fname, 0.4, 0.2)
+            self.viewer.set_bounds(-0.2, 1.2, -0.2, 1.2)
+            fname = "drone3.png"
+            self.img = rendering.Image(fname, 0.4, 0.17)
+            self.img.set_color(1., 1., 1.)
             self.imgtrans = rendering.Transform()
             self.img.add_attr(self.imgtrans)
-            for i in np.linspace(0, 1., num=10, endpoint=True):
-              for j in np.linspace(0, 1., num=10, endpoint=True):
-                dx, dy = self.wind_field(i, j)
-                size = 0.1*np.sqrt(dx**2 + dy**2)
-                theta = np.arctan2(dy, dx)
-                sin, cos = np.sin(theta), np.cos(theta)
-                self.viewer.draw_line((i, j), (i+size*cos, j+size*cos))
+            fnamewind = "wind.png"
+            self.imgwind = rendering.Image(fnamewind, 1.4, 1.4)
+            self.imgwind.set_color(0.3, 0.3, 0.3)
+            self.imgtranswind = rendering.Transform()
+            self.imgwind.add_attr(self.imgtranswind)
 
+        self.viewer.add_onetime(self.imgwind)
         self.viewer.add_onetime(self.img)
-        self.imgtrans.set_translation(state[0], state[1])
+        self.imgtrans.set_translation(state[0], state[1]+0.04)
         self.imgtrans.set_rotation(state[2])
+        self.imgtranswind.set_translation(0.5, 0.5)
+
         #if last_u:
         #    self.imgtrans.scale = (last_u/2, np.abs(last_u)/2)
         return self.viewer.render(return_rgb_array = mode=='rgb_array')
