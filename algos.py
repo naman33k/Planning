@@ -54,12 +54,12 @@ def rollout_for_actions(task, old_actions, gains, gainsK, old_pivots, alpha, mod
     new_actions.append(new_action)  
   return new_actions
 
-def trajectory_cost(task, actions):
+def trajectory_cost(task, actions, is_real_dynamics=True):
   states = [task.initial_state]
   cost = 0
   for j in range(task.h):
     cost += task.cost(states[j], actions[j], j)
-    states.append(task.step(states[j], actions[j], j))
+    states.append(task.step(states[j], actions[j], j, is_real_dynamics=is_real_dynamics))
   return cost + task.cost(states[task.h], None, task.h)  
 
 def rollout(task, actions, is_real_dynamics=True):
@@ -95,7 +95,7 @@ def IPA(task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, 
       #print("In backtracking line search")
       for alpha in alphas:
         #print("Trying alpha ", alpha)
-        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha)
+        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1)
         new_cost = trajectory_cost(task, us_new)
         #print("New Cost is ", new_cost)
         if new_cost < total_cost:
