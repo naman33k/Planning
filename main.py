@@ -27,7 +27,7 @@ u0 = np.tile(quadrotor.hover_input, (quadrotor.h, 1)) + 0.0*jax.random.uniform(k
 # print(quadrotor.initial_state)
 # print(quadrotor.step(quadrotor.initial_state, quadrotor.hover_input, 1, is_real_dynamics=False))
 
-final_actions, costs, states, final_cost = IPA('ilqr_closed', quadrotor, u0, 10)
+final_actions, costs, states, final_cost = IPA('ilc_closed', quadrotor, u0, 6)
 print('Final Costs %f'%final_cost)
 for i in range(quadrotor.h+1):
 	if i==0:
@@ -38,4 +38,6 @@ for i in range(quadrotor.h+1):
 		time.sleep(1. / 20.)
 
 # Wind = 0.1 (10 iters), nominal = 52, oracle = 60, ilc_closed = 60, ilqr_closed = 90, ilc_open = 0.2M, ilqr_open = 0.7M
+# Wind = 0.1 (30 iters), nominal = 52, oracle = 60, ilc_closed = 60, ilqr_closed = 0.7M (K->0?), ilc_open = 0.2M, ilqr_open = 0.7M
 # Wind = 0.15 (10 iters), nominal = 52, oracle = 65, ilc_closed = 25K, ilqr_closed = 260, ilc_open = 1M, ilqr_open = 8M
+# Wind = 0.15 (30 iters), nominal = 52, oracle = 65, ilc_closed = 65, ilqr_closed = 8M (K->0?), ilc_open = 1M, ilqr_open = 8M

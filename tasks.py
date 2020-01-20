@@ -151,9 +151,9 @@ class PlanarQuadrotor:
         self.viewer = None
         self.action_size = 2
         self.state_size = 6
-        self.wind_force = 0.15
+        self.wind_force = 0.1
         self.initial_state = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
-        self.goal_state = np.array([0.0, 0.0, 0, 0.0, 0.0, 0.0])
+        self.goal_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.h = 100
 
         @jax.jit
