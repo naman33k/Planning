@@ -153,4 +153,3 @@ def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=
       actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) # not sure, let's check
   states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=final_is_real_dynamics, is_real_derivatives=final_is_real_derivatives)
   return actions, cost_array, states, total_cost
-
