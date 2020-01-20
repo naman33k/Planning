@@ -62,7 +62,7 @@ def trajectory_cost(task, actions, is_real_dynamics=True):
     states.append(task.step(states[j], actions[j], j, is_real_dynamics=is_real_dynamics))
   return cost + task.cost(states[task.h], None, task.h)  
 
-def rollout(task, actions, is_real_dynamics=True):
+def rollout(task, actions, is_real_dynamics=True, is_real_derivatives=False):
   states = [task.initial_state] 
   cost_params = []
   d_params = []
@@ -70,13 +70,30 @@ def rollout(task, actions, is_real_dynamics=True):
   for j in range(task.h):
     total_cost+= task.cost(states[j], actions[j], j)
     cost_params.append(task.cost_grad(states[j], actions[j],j))
-    d_params.append(task.dynamics_grad(states[j], actions[j],j))
+    d_params.append(task.dynamics_grad(states[j], actions[j],j, is_real_derivatives))
     states.append(task.step(states[j],actions[j],j, is_real_dynamics))
   total_cost+= task.cost(states[task.h], None, task.h)
   cost_params.append(task.cost_grad(states[task.h], None,task.h))
   return states, cost_params, d_params, total_cost
 
-def IPA(task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, mu_min=1e-6, delta_0=2.0, mu_max=1e10):
+def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, mu_min=1e-6, delta_0=2.0, mu_max=1e10):
+  if mode == 'nominal':
+    rollout_is_real_dynamics, rollout_is_real_derivatives = False, False
+    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, False
+    final_is_real_dynamics, final_is_real_derivatives = False, False #final_is_real_derivatives is inconsequential
+  elif mode == 'oracle':
+    rollout_is_real_dynamics, rollout_is_real_derivatives = True, True
+    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 1, True
+    final_is_real_dynamics, final_is_real_derivatives = True, True #final_is_real_derivatives is inconsequential
+  elif mode == 'ilc_closed':
+    rollout_is_real_dynamics, rollout_is_real_derivatives = True, False
+    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 1, True
+    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
+  elif mode == 'ilc_open':
+    rollout_is_real_dynamics, rollout_is_real_derivatives = True, False
+    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, True
+    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
+
   ## This function implements the generic loop.
   ## Perform Rollout
   mu = 1.0
@@ -87,7 +104,7 @@ def IPA(task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, 
   for i in range(iters):
     print("In iteration ", i)
     accepted = False
-    states, cost_params, d_params, total_cost = rollout(task, actions)
+    states, cost_params, d_params, total_cost = rollout(task, actions, rollout_is_real_dynamics, rollout_is_real_derivatives)
     cost_array.append(total_cost)
     print("Total Cost is ",total_cost)
     sol_k, sol_K = LQRSolver(cost_params, d_params, task.h, task.state_size, mu=mu)
@@ -95,8 +112,8 @@ def IPA(task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, 
       #print("In backtracking line search")
       for alpha in alphas:
         #print("Trying alpha ", alpha)
-        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1)
-        new_cost = trajectory_cost(task, us_new)
+        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) #REAL, no dX
+        new_cost = trajectory_cost(task, us_new, is_real_dynamics=alpha_cost_is_real_dynamics) #REAL Cost
         #print("New Cost is ", new_cost)
         if new_cost < total_cost:
           # if np.abs((J_opt - J_new) / J_opt) < tol:
@@ -120,7 +137,7 @@ def IPA(task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, 
           print("exceeded max regularization term")
           break
     else:
-      actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha)
-  states, cost_params, d_params, total_cost = rollout(task, actions)
+      actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) # not sure, let's check
+  states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=final_is_real_dynamics, is_real_derivatives=final_is_real_derivatives)
   return actions, cost_array, states
 

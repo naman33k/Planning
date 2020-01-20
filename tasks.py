@@ -57,6 +57,7 @@ class PendulumTask:
     self._dynamics = _dynamics
     self._dynamics_real = _dynamics_real
     self._dynamics_der = jax.jit(jax.jacfwd(_dynamics))
+    self._dynamics_der_real = jax.jit(jax.jacfwd(_dynamics_real))
 
     self.Q = np.eye(self.state_size)
     # self.Q = jax.ops.index_update(self.Q,(0, 1),self.pendulum_length)
@@ -89,8 +90,8 @@ class PendulumTask:
     else:
       return self._dynamics([x,u])
 
-  def dynamics_grad(self,x,u,i):
-    return self._dynamics_der([x,u])
+  def dynamics_grad(self,x,u,i, is_real_dynamics=False):
+    return self._dynamics_der_real([x,u]) if is_real_dynamics else self._dynamics_der([x,u])
 
   def cost_grad(self,x,u,i):
     return self._costgrad(x,u,i)
@@ -150,9 +151,9 @@ class PlanarQuadrotor:
         self.viewer = None
         self.action_size = 2
         self.state_size = 6
-        self.wind_force = 0.
+        self.wind_force = 0.1
         self.initial_state = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
-        self.goal_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.goal_state = np.array([0.0, 0.0, 0, 0.0, 0.0, 0.0])
         self.h = 100
 
         @jax.jit
@@ -196,9 +197,11 @@ class PlanarQuadrotor:
             state_dot = np.array([xdot, ydot, thdot, xddot, yddot, thddot])
             new_state = state + state_dot*dt
             return new_state
+            
         self._dynamics = _dynamics
         self._dynamics_real = _dynamics_real
         self._dynamics_der = jax.jit(jax.jacfwd(_dynamics))
+        self._dynamics_der_real = jax.jit(jax.jacfwd(_dynamics_real))
 
         def _costval(x, u, i):
             if i==self.h:
@@ -221,10 +224,9 @@ class PlanarQuadrotor:
         else:
           return self._dynamics([x,u])
 
+    def dynamics_grad(self,x,u,i, is_real_dynamics=False):
+      return self._dynamics_der_real([x,u]) if is_real_dynamics else self._dynamics_der([x,u])
     
-    def dynamics_grad(self,x,u,i):
-        return self._dynamics_der([x,u])
-
     def cost_grad(self,x,u,i):
         return self._costgrad(x,u,i)
 
@@ -232,29 +234,22 @@ class PlanarQuadrotor:
         return self._cost(x,u,i)
 
     def reset(self):
-        x = random.uniform(generate_key(), minval=-0.5, maxval=0.5)
-        y = random.uniform(generate_key(), minval=-0.5, maxval=0.5)
-        th = random.uniform(generate_key(), minval=-30*np.pi/180, maxval=30*np.pi/180)
-        xdot = random.uniform(generate_key(), minval=-0.1, maxval=0.1)
-        ydot = random.uniform(generate_key(), minval=-0.1, maxval=0.1)
-        thdot = random.uniform(generate_key(), minval=-0.1, maxval=0.1)
-        
-        self.state = np.array([x, y, th, xdot, ydot, thdot])
+        self.state = self.initial_state
         self.last_u = np.array([0.0, 0.0])
         return self.state 
 
     def render(self, state, mode='human', last_u=None):
         if self.viewer is None:
             self.viewer = rendering.Viewer(1000,1000)
-            self.viewer.set_bounds(-0.2, 1.2, -0.2, 1.2)
+            self.viewer.set_bounds(-1.2, 1.2, -1.2, 1.2)
             fname = "drone3.png"
             self.img = rendering.Image(fname, 0.4, 0.17)
             self.img.set_color(1., 1., 1.)
             self.imgtrans = rendering.Transform()
             self.img.add_attr(self.imgtrans)
             fnamewind = "wind.png"
-            self.imgwind = rendering.Image(fnamewind, 1.4, 1.4)
-            self.imgwind.set_color(0.3, 0.3, 0.3)
+            self.imgwind = rendering.Image(fnamewind, 2.4, 2.4)
+            self.imgwind.set_color(0.5, 0.5, 0.5)
             self.imgtranswind = rendering.Transform()
             self.imgwind.add_attr(self.imgtranswind)
 
@@ -262,7 +257,6 @@ class PlanarQuadrotor:
         self.viewer.add_onetime(self.img)
         self.imgtrans.set_translation(state[0], state[1]+0.04)
         self.imgtrans.set_rotation(state[2])
-        self.imgtranswind.set_translation(0.5, 0.5)
 
         #if last_u:
         #    self.imgtrans.scale = (last_u/2, np.abs(last_u)/2)
