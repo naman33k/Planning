@@ -93,6 +93,14 @@ def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=
     rollout_is_real_dynamics, rollout_is_real_derivatives = True, False
     alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, True
     final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
+  elif mode == 'ilqr_closed':
+    rollout_is_real_dynamics, rollout_is_real_derivatives = False, False
+    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, False
+    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
+  elif mode == 'ilqr_open':
+    rollout_is_real_dynamics, rollout_is_real_derivatives = False, False
+    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, False
+    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
 
   ## This function implements the generic loop.
   ## Perform Rollout
@@ -112,14 +120,19 @@ def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=
       #print("In backtracking line search")
       for alpha in alphas:
         #print("Trying alpha ", alpha)
-        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) #REAL, no dX
-        new_cost = trajectory_cost(task, us_new, is_real_dynamics=alpha_cost_is_real_dynamics) #REAL Cost
+        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) 
+        new_cost = trajectory_cost(task, us_new, is_real_dynamics=alpha_cost_is_real_dynamics) 
         #print("New Cost is ", new_cost)
         if new_cost < total_cost:
           # if np.abs((J_opt - J_new) / J_opt) < tol:
           #   converged = True
           total_cost = new_cost
-          actions = us_new
+
+          if mode == 'ilqr_closed' and i == iters-1:
+            actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1) #get actiosn from true dynamics
+          else:
+            actions = us_new
+
           # Decrease regularization term.
           delta = min(1.0, delta) / delta_0
           mu *= delta
@@ -139,5 +152,5 @@ def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=
     else:
       actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) # not sure, let's check
   states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=final_is_real_dynamics, is_real_derivatives=final_is_real_derivatives)
-  return actions, cost_array, states
+  return actions, cost_array, states, total_cost
 
