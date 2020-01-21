@@ -10,8 +10,8 @@ action_size = 2
 quadrotor = PlanarQuadrotor()
 u0 = np.tile(quadrotor.hover_input, (quadrotor.h, 1)) + 0.0*jax.random.uniform(key, shape=(quadrotor.h, quadrotor.action_size), minval=-1.0)
 
-final_actions, _, states, final_cost = IPA('ilc_closed', quadrotor, u0, 4)
-#final_actions, _, states, final_cost = PiLOT(quadrotor, u0, 4)
+#final_actions, _, states, final_cost = IPA('oracle', quadrotor, u0, 60)
+final_actions, _, states, final_cost = PiLOT(quadrotor, u0, 10)
 print('Final Costs %f'%final_cost)
 
 for i in range(quadrotor.h+1):
