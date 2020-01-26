@@ -1,5 +1,6 @@
 import jax.numpy as np 
 import jax
+import timeit
 
 ## This function solves a simple backward DP on a time varying LQR system like this
 ## min \sum_{t} Q_t(x_t,u_t) + Q_F(x_t, u_t) where x_{t+1} = Ax_t + Bu_t 
@@ -62,7 +63,7 @@ def trajectory_cost(task, actions, is_real_dynamics=True):
     states.append(task.step(states[j], actions[j], j, is_real_dynamics=is_real_dynamics))
   return cost + task.cost(states[task.h], None, task.h)  
 
-def rollout(task, actions, is_real_dynamics=True, is_real_derivatives=False):
+def rollout(task, actions, is_real_dynamics=True, real_der=False):
   states = [task.initial_state] 
   cost_params = []
   d_params = []
@@ -70,49 +71,48 @@ def rollout(task, actions, is_real_dynamics=True, is_real_derivatives=False):
   for j in range(task.h):
     total_cost+= task.cost(states[j], actions[j], j)
     cost_params.append(task.cost_grad(states[j], actions[j],j))
-    d_params.append(task.dynamics_grad(states[j], actions[j],j, is_real_derivatives))
+    if real_der:
+      d_params.append(task.dynamics_real_grad(states[j], actions[j],j))
+    else:
+      d_params.append(task.dynamics_grad(states[j], actions[j],j))
     states.append(task.step(states[j],actions[j],j, is_real_dynamics))
   total_cost+= task.cost(states[task.h], None, task.h)
   cost_params.append(task.cost_grad(states[task.h], None,task.h))
   return states, cost_params, d_params, total_cost
 
-def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=True, mu_min=1e-6, delta_0=2.0, mu_max=1e10):
-  if mode == 'nominal':
-    rollout_is_real_dynamics, rollout_is_real_derivatives = False, False
-    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, False
-    final_is_real_dynamics, final_is_real_derivatives = False, False #final_is_real_derivatives is inconsequential
-  elif mode == 'oracle':
-    rollout_is_real_dynamics, rollout_is_real_derivatives = True, True
-    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 1, True
-    final_is_real_dynamics, final_is_real_derivatives = True, True #final_is_real_derivatives is inconsequential
-  elif mode == 'ilc_closed':
-    rollout_is_real_dynamics, rollout_is_real_derivatives = True, False
-    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 1, True
-    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
-  elif mode == 'ilc_open':
-    rollout_is_real_dynamics, rollout_is_real_derivatives = True, False
-    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, True
-    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
-  elif mode == 'ilqr_closed':
-    rollout_is_real_dynamics, rollout_is_real_derivatives = False, False
-    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, False
-    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
-  elif mode == 'ilqr_open':
-    rollout_is_real_dynamics, rollout_is_real_derivatives = False, False
-    alpha_get_actions_mode, alpha_cost_is_real_dynamics = 2, False
-    final_is_real_dynamics, final_is_real_derivatives = True, False #final_is_real_derivatives is inconsequential
+
+
+def IPA(task, initial_actions, iters, alg="ILQR-FULL", alpha=1.0, backtracking_line_search=True, mu_min=1e-6, delta_0=2.0, mu_max=1e10):
+  ### Modes I am implementing
+  ### ILQR-FULL - This is the standard "full information" ILQR
+  ### ILQR-CE - This is the closed loop certainty equivalent ILQR System 
+  ### ILC-CLOSED - This is the closed loop version of ILC
+  ### ILC-OPEN - This is the open loop version of ILC
 
   ## This function implements the generic loop.
   ## Perform Rollout
   mu = 1.0
   delta = delta_0
   actions = initial_actions
-  alphas = 1.1**(-np.arange(10)**2)
+  alphas = (1.1**(-np.arange(10)**2))
   cost_array = []
+  dim_x = task.state_size
+  dim_u = task.action_size
+  IGPC_h = 3
+  if alg=="IGPC":
+    M = [np.zeros((dim_u, dim_x)) for i in range(IGPC_h)]
   for i in range(iters):
     print("In iteration ", i)
     accepted = False
-    states, cost_params, d_params, total_cost = rollout(task, actions, rollout_is_real_dynamics, rollout_is_real_derivatives)
+    if alg=="ILQR-CE":
+      states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=False,real_der=False)
+    elif alg=="ILC-CLOSED" or alg=="ILC-OPEN" or alg=="IGPC":
+      states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=True,real_der=False)
+    elif alg=="ILQR-FULL":
+      states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=True,real_der=True)
+    else:
+      print("Algorithm not recognized")
+      exit()
     cost_array.append(total_cost)
     print("Total Cost is ",total_cost)
     sol_k, sol_K = LQRSolver(cost_params, d_params, task.h, task.state_size, mu=mu)
@@ -120,19 +120,26 @@ def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=
       #print("In backtracking line search")
       for alpha in alphas:
         #print("Trying alpha ", alpha)
-        us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) 
-        new_cost = trajectory_cost(task, us_new, is_real_dynamics=alpha_cost_is_real_dynamics) 
+        if alg=="ILQR-CE":
+          us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=2)
+          new_cost = trajectory_cost(task, us_new, is_real_dynamics=False)
+        elif alg=="ILC-OPEN":
+          us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=2)
+          new_cost = trajectory_cost(task, us_new, is_real_dynamics=True)
+        elif alg=="ILC-CLOSED" or alg=="ILQR-FULL":
+          us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1)
+          new_cost = trajectory_cost(task, us_new, is_real_dynamics=True)
+        elif alg=="IGPC":
+          us_new, M_new = IGPC_rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, M, dim_x, dim_u)
+          new_cost = trajectory_cost(task, us_new, is_real_dynamics=True)
         #print("New Cost is ", new_cost)
         if new_cost < total_cost:
           # if np.abs((J_opt - J_new) / J_opt) < tol:
           #   converged = True
           total_cost = new_cost
-
-          if mode == 'ilqr_closed' and i == iters-1:
-            actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1) #get actiosn from true dynamics
-          else:
-            actions = us_new
-
+          actions = us_new
+          if alg=="IGPC":
+            M = M_new
           # Decrease regularization term.
           delta = min(1.0, delta) / delta_0
           mu *= delta
@@ -150,6 +157,135 @@ def IPA(mode, task, initial_actions, iters, alpha=1.0, backtracking_line_search=
           print("exceeded max regularization term")
           break
     else:
-      actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=alpha_get_actions_mode) # not sure, let's check
-  states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=final_is_real_dynamics, is_real_derivatives=final_is_real_derivatives)
-  return actions, cost_array, states, total_cost
+      if alg=="ILQR-CE":
+          actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=2)
+      elif alg=="ILC-OPEN":
+          actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=2)
+      elif alg=="ILC-CLOSED" or alg=="ILQR-FULL":
+          actions = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1)
+      elif alg=="IGPC":
+          actions, M = IGPC_rollout_for_actions(task, actions, sol_k, sol_K, states, M, dim_x, dim_u)
+
+  if alg=="ILQR-CE":
+    ### In this we need to one real rollout for actions at the end
+    print("Executing final run for ILQR-CE")
+    states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=False,real_der=False)
+    sol_k, sol_K = LQRSolver(cost_params, d_params, task.h, task.state_size, mu=mu)
+    us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=1)
+    new_cost = trajectory_cost(task, us_new, is_real_dynamics=True)
+    cost_array.append(new_cost)
+    print("Final Execution is ", new_cost)
+    actions = us_new
+  states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=True,real_der=False)
+
+  return actions, cost_array, states
+
+def padded_w(w, l, d):
+  if l==0:
+    return []
+  if len(w) < l:
+    prep = [np.zeros(d)]*(l-len(w))
+    return prep + w
+  else:
+    return w[-l:]
+
+def IGPC_rollout_for_actions(task, old_actions, gains, gainsK, old_pivots, ILC_alpha, M, dim_x, dim_u):
+  IGPC_alpha = 0.01
+  IGPC_delta = 1.0
+  IGPC_h = len(M)
+  states = [task.initial_state]
+  new_actions = []
+  ILC_actions = []
+  w = []
+  for j in range(task.h):
+    new_w = states[j]-old_pivots[j]
+    w.append(new_w)
+    new_ilc_action = old_actions[j]+ILC_alpha*gains[j]+gainsK[j]@new_w
+    ILC_actions.append(new_ilc_action)
+    if j > IGPC_h:
+      w_to_pass = padded_w(w, IGPC_h+len(M), dim_x)
+      #start_time = timeit.default_timer()
+      grad = IGPC_Gradient(task, M, w_to_pass, ILC_actions[-IGPC_h:], states[-(IGPC_h+1)], IGPC_h, dim_x, dim_u)
+      #elapsed = timeit.default_timer() - start_time
+      #print("Elapsed ", elapsed)
+      ### update M
+      M = [M[i] - IGPC_alpha*grad[i] for i in range(IGPC_h)]
+      #print(len(M))
+      #print(M[0])
+      ### Compute IGPC delta Action
+      IGPC_act = sum([M[i]@w_to_pass[-i] for i in range(IGPC_h)])
+      new_action = new_ilc_action+IGPC_delta*IGPC_act  
+      states.append(task.step(states[j],new_action,j, is_real_dynamics=True))
+      new_actions.append(new_action)
+    else:
+      new_action = new_ilc_action  
+      states.append(task.step(states[j],new_action,j, is_real_dynamics=True))
+      new_actions.append(new_action)  
+  return new_actions, M  
+
+def IGPC_Gradient(task, M, w, actions, initial_state, IGPC_h, dim_x, dim_u):
+  hm = len(M)
+  ## The length of w should be the sum of hm and IGPC_h
+  ## The first hm entries of w represent the "previous" perturbations
+  start_index = hm
+  index = start_index
+  ## Simple check assertions to debug for errors
+  for i in range(hm):
+    assert(M[i].shape==(dim_u, dim_x))
+  assert(len(w)==hm+IGPC_h)
+
+  ## We want to create a list of 2d values representing gradient
+  cost_der = [np.zeros((dim_u, dim_x)) for i in range(hm)]
+  ## Initialize x and der_x
+  x = initial_state
+  der_x = [np.zeros((dim_x, dim_u, dim_x)) for i in range(hm)]
+
+  ## --------- LOGIC -----------------------
+  ## Forward Pass
+  ## a_t = u_t + \sum_{0 to hm} M_i w_{t-1-i}
+  ## x_{t+1} = g(x_t, a_t) + w_t
+  ## del x_{t+1} / del M_i = first_term + second_term
+  ## first_term = del g(x_t, a_t)/del x * del x_t / del M_i
+  ## * is an einsum defined as 'ij,jkl->ikl'
+  ## second_term = del g(x_t, a_t)/ del u * del a_t / del M_i
+  ## del a_t / del M_i -> array with only entries at [j,j,k] = [w_t-1-i]_k
+
+  ## We can compute the cost derivative pass here itself
+  ## del cost(x_t,a_t)/ del M_i = del cost/ del x * del x/del M_i + del cost/ del u * del u/del M_i
+  ## * is the einsum 'i,ijk->jk'
+  ## ----------------------------------------
+  for t in range(IGPC_h):
+    ## Compute a_t
+    a = actions[t]
+    for i in range(hm):
+      a += M[i]@w[start_index+t-1-i]
+    next_x = task.step(x, a, 0, is_real_dynamics=False) + w[start_index+t]
+    ## Computing derivatives of next_x
+    der_x_next = []
+    for i in range(hm):
+      d_x, d_u = task.dynamics_grad(x, a, 0)
+      ## Perform the einsum
+      ### CHECK
+      #first_term = np.einsum('ij,jkl->ikl', d_x, der_x[i])
+      first_term = np.tensordot(d_x, der_x[i],1)
+      ## Prepare der_a
+      der_a = np.zeros((dim_u, dim_u, dim_x))
+      for j in range(dim_u):
+        der_a = jax.ops.index_update(der_a, jax.ops.index[j,j,:], w[start_index+t-1-i])  
+      ## Perform the einsum
+      #second_term = np.einsum('ij,jkl->ikl', d_u, der_a)
+      second_term = np.tensordot(d_u, der_a,1)
+      der_x_next.append(first_term+second_term)
+
+      ## Compute cost derivatives
+      c_x, c_u, c_xx, c_ux, c_uu = task.cost_grad(x, a, 0)
+      #cost_der_1 = np.einsum('i,ijk->jk', c_x, der_x[i])
+      cost_der_1 = np.tensordot(c_x, der_x[i],1)
+      #cost_der_2 = np.einsum('i,ijk->jk', c_u, der_a)
+      cost_der_2 = np.tensordot(c_u, der_a,1)
+      cost_der[i] = cost_der[i] + cost_der_1 + cost_der_2
+    x = next_x
+    der_x = der_x_next
+  return cost_der
+
+

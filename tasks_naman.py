@@ -57,7 +57,7 @@ class PendulumTask:
     self._dynamics = _dynamics
     self._dynamics_real = _dynamics_real
     self._dynamics_der = jax.jit(jax.jacfwd(_dynamics))
-    self._dynamics_der_real = jax.jit(jax.jacfwd(_dynamics_real))
+    self._dynamics_real_der = jax.jit(jax.jacfwd(_dynamics_real))
 
     self.Q = np.eye(self.state_size)
     # self.Q = jax.ops.index_update(self.Q,(0, 1),self.pendulum_length)
@@ -92,6 +92,9 @@ class PendulumTask:
 
   def dynamics_grad(self,x,u,i, is_real_dynamics=False):
     return self._dynamics_der_real([x,u]) if is_real_dynamics else self._dynamics_der([x,u])
+
+  def dynamics_real_grad(self,x,u,i):
+    return self._dynamics_real_der([x,u])
 
   def cost_grad(self,x,u,i):
     return self._costgrad(x,u,i)
@@ -151,7 +154,7 @@ class PlanarQuadrotor:
         self.viewer = None
         self.action_size = 2
         self.state_size = 6
-        self.wind_force = 0.15
+        self.wind_force = 0.1
         self.initial_state = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
         self.goal_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.h = 100
@@ -201,7 +204,7 @@ class PlanarQuadrotor:
         self._dynamics = _dynamics
         self._dynamics_real = _dynamics_real
         self._dynamics_der = jax.jit(jax.jacfwd(_dynamics))
-        self._dynamics_der_real = jax.jit(jax.jacfwd(_dynamics_real))
+        self._dynamics_real_der = jax.jit(jax.jacfwd(_dynamics_real))
 
         def _costval(x, u, i):
             if i==self.h:
@@ -227,6 +230,12 @@ class PlanarQuadrotor:
     def dynamics_grad(self,x,u,i, is_real_dynamics=False):
       return self._dynamics_der_real([x,u]) if is_real_dynamics else self._dynamics_der([x,u])
     
+    def dynamics_grad(self,x,u,i):
+        return self._dynamics_der([x,u])
+
+    def dynamics_real_grad(self,x,u,i):
+        return self._dynamics_real_der([x,u])
+
     def cost_grad(self,x,u,i):
         return self._costgrad(x,u,i)
 
