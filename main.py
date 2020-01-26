@@ -1,8 +1,8 @@
 import jax
 import time
 import jax.numpy as np
-from algos_naman import *
-from tasks_naman import *
+from algos import *
+from tasks import *
 import matplotlib.pyplot as plt
 
 # action_size = 1
