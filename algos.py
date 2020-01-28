@@ -190,102 +190,125 @@ def padded_w(w, l, d):
     return w[-l:]
 
 def IGPC_rollout_for_actions(task, old_actions, gains, gainsK, old_pivots, ILC_alpha, M, dim_x, dim_u):
-  IGPC_alpha = 0.01
-  IGPC_delta = 1.0
+  print("IGPC Start")
+  IGPC_alpha = 0.001
+  IGPC_delta = 0.001
   IGPC_h = len(M)
   states = [task.initial_state]
   new_actions = []
-  ILC_actions = []
   w = []
+  IGPC_grad = jax.grad(IGPC_Loss)
   for j in range(task.h):
-    new_w = states[j]-old_pivots[j]
-    w.append(new_w)
-    new_ilc_action = old_actions[j]+ILC_alpha*gains[j]+gainsK[j]@new_w
-    ILC_actions.append(new_ilc_action)
+    delta_x = states[j]-old_pivots[j]
+    new_ilc_action = old_actions[j]+ILC_alpha*gains[j]+gainsK[j]@delta_x
     if j > IGPC_h:
       w_to_pass = padded_w(w, IGPC_h+len(M), dim_x)
-      #start_time = timeit.default_timer()
-      grad = IGPC_Gradient(task, M, w_to_pass, ILC_actions[-IGPC_h:], states[-(IGPC_h+1)], IGPC_h, dim_x, dim_u)
-      #elapsed = timeit.default_timer() - start_time
-      #print("Elapsed ", elapsed)
+      grad = IGPC_grad(M, task, w_to_pass, old_pivots[j-IGPC_h:], old_actions[j-IGPC_h-1:], gains[j-IGPC_h-1:], gainsK[j-IGPC_h-1:], states[-(IGPC_h+1)], IGPC_h, dim_x, dim_u, j, ILC_alpha)
       ### update M
       M = [M[i] - IGPC_alpha*grad[i] for i in range(IGPC_h)]
       #print(len(M))
       #print(M[0])
       ### Compute IGPC delta Action
       IGPC_act = sum([M[i]@w_to_pass[-i] for i in range(IGPC_h)])
-      new_action = new_ilc_action+IGPC_delta*IGPC_act  
-      states.append(task.step(states[j],new_action,j, is_real_dynamics=True))
+      new_action = new_ilc_action+IGPC_delta*IGPC_act
+      f_state = task.step(states[j],new_action,j, is_real_dynamics=True)
+      g_state = task.step(states[j],new_action,j, is_real_dynamics=False)
+      states.append(f_state)
+      w.append(f_state - g_state)
       new_actions.append(new_action)
     else:
       new_action = new_ilc_action  
-      states.append(task.step(states[j],new_action,j, is_real_dynamics=True))
-      new_actions.append(new_action)  
+      f_state = task.step(states[j],new_action,j, is_real_dynamics=True)
+      g_state = task.step(states[j],new_action,j, is_real_dynamics=False)
+      states.append(f_state)
+      w.append(f_state - g_state)
+      new_actions.append(new_action) 
+  print("IGPC_end") 
   return new_actions, M  
 
-def IGPC_Gradient(task, M, w, actions, initial_state, IGPC_h, dim_x, dim_u):
+def IGPC_Loss(M, task, w, pivots, actions, gainsk, gainsK, initial_state, IGPC_h, dim_x, dim_u, true_index, ILC_alpha):
+  ### This function is only to compute the loss
+  ### We execute an appropriate rollout and then output a cost.
   hm = len(M)
   ## The length of w should be the sum of hm and IGPC_h
   ## The first hm entries of w represent the "previous" perturbations
   start_index = hm
   index = start_index
-  ## Simple check assertions to debug for errors
-  for i in range(hm):
-    assert(M[i].shape==(dim_u, dim_x))
-  assert(len(w)==hm+IGPC_h)
-
-  ## We want to create a list of 2d values representing gradient
-  cost_der = [np.zeros((dim_u, dim_x)) for i in range(hm)]
-  ## Initialize x and der_x
   x = initial_state
-  der_x = [np.zeros((dim_x, dim_u, dim_x)) for i in range(hm)]
-
-  ## --------- LOGIC -----------------------
-  ## Forward Pass
-  ## a_t = u_t + \sum_{0 to hm} M_i w_{t-1-i}
-  ## x_{t+1} = g(x_t, a_t) + w_t
-  ## del x_{t+1} / del M_i = first_term + second_term
-  ## first_term = del g(x_t, a_t)/del x * del x_t / del M_i
-  ## * is an einsum defined as 'ij,jkl->ikl'
-  ## second_term = del g(x_t, a_t)/ del u * del a_t / del M_i
-  ## del a_t / del M_i -> array with only entries at [j,j,k] = [w_t-1-i]_k
-
-  ## We can compute the cost derivative pass here itself
-  ## del cost(x_t,a_t)/ del M_i = del cost/ del x * del x/del M_i + del cost/ del u * del u/del M_i
-  ## * is the einsum 'i,ijk->jk'
-  ## ----------------------------------------
+  ## Perform a rollout
+  delta_x = np.zeros((dim_x,))
   for t in range(IGPC_h):
     ## Compute a_t
-    a = actions[t]
+    delta_x = x - pivots[t]
+    a = actions[t]+ILC_alpha*gainsk[t]+gainsK[t]@delta_x
     for i in range(hm):
       a += M[i]@w[start_index+t-1-i]
-    next_x = task.step(x, a, 0, is_real_dynamics=False) + w[start_index+t]
-    ## Computing derivatives of next_x
-    der_x_next = []
-    for i in range(hm):
-      d_x, d_u = task.dynamics_grad(x, a, 0)
-      ## Perform the einsum
-      ### CHECK
-      #first_term = np.einsum('ij,jkl->ikl', d_x, der_x[i])
-      first_term = np.tensordot(d_x, der_x[i],1)
-      ## Prepare der_a
-      der_a = np.zeros((dim_u, dim_u, dim_x))
-      for j in range(dim_u):
-        der_a = jax.ops.index_update(der_a, jax.ops.index[j,j,:], w[start_index+t-1-i])  
-      ## Perform the einsum
-      #second_term = np.einsum('ij,jkl->ikl', d_u, der_a)
-      second_term = np.tensordot(d_u, der_a,1)
-      der_x_next.append(first_term+second_term)
+    x = task.step(x, a, true_index-t+IGPC_h, is_real_dynamics=False) + w[start_index+t]
+  return task.cost(x, a, true_index)
 
-      ## Compute cost derivatives
-      c_x, c_u, c_xx, c_ux, c_uu = task.cost_grad(x, a, 0)
-      #cost_der_1 = np.einsum('i,ijk->jk', c_x, der_x[i])
-      cost_der_1 = np.tensordot(c_x, der_x[i],1)
-      #cost_der_2 = np.einsum('i,ijk->jk', c_u, der_a)
-      cost_der_2 = np.tensordot(c_u, der_a,1)
-      cost_der[i] = cost_der[i] + cost_der_1 + cost_der_2
-    x = next_x
-    der_x = der_x_next
-  return cost_der
+# def IGPC_Gradient(task, M, w, actions, initial_state, IGPC_h, dim_x, dim_u):
+#   hm = len(M)
+#   ## The length of w should be the sum of hm and IGPC_h
+#   ## The first hm entries of w represent the "previous" perturbations
+#   start_index = hm
+#   index = start_index
+#   ## Simple check assertions to debug for errors
+#   for i in range(hm):
+#     assert(M[i].shape==(dim_u, dim_x))
+#   assert(len(w)==hm+IGPC_h)
+
+#   ## We want to create a list of 2d values representing gradient
+#   cost_der = [np.zeros((dim_u, dim_x)) for i in range(hm)]
+#   ## Initialize x and der_x
+#   x = initial_state
+#   der_x = [np.zeros((dim_x, dim_u, dim_x)) for i in range(hm)]
+
+#   ## --------- LOGIC -----------------------
+#   ## Forward Pass
+#   ## a_t = u_t + \sum_{0 to hm} M_i w_{t-1-i}
+#   ## x_{t+1} = g(x_t, a_t) + w_t
+#   ## del x_{t+1} / del M_i = first_term + second_term
+#   ## first_term = del g(x_t, a_t)/del x * del x_t / del M_i
+#   ## * is an einsum defined as 'ij,jkl->ikl'
+#   ## second_term = del g(x_t, a_t)/ del u * del a_t / del M_i
+#   ## del a_t / del M_i -> array with only entries at [j,j,k] = [w_t-1-i]_k
+
+#   ## We can compute the cost derivative pass here itself
+#   ## del cost(x_t,a_t)/ del M_i = del cost/ del x * del x/del M_i + del cost/ del u * del u/del M_i
+#   ## * is the einsum 'i,ijk->jk'
+#   ## ----------------------------------------
+#   for t in range(IGPC_h):
+#     ## Compute a_t
+#     a = actions[t]
+#     for i in range(hm):
+#       a += M[i]@w[start_index+t-1-i]
+#     next_x = task.step(x, a, 0, is_real_dynamics=False) + w[start_index+t]
+#     ## Computing derivatives of next_x
+#     der_x_next = []
+#     for i in range(hm):
+#       d_x, d_u = task.dynamics_grad(x, a, 0)
+#       ## Perform the einsum
+#       ### CHECK
+#       #first_term = np.einsum('ij,jkl->ikl', d_x, der_x[i])
+#       first_term = np.tensordot(d_x, der_x[i],1)
+#       ## Prepare der_a
+#       der_a = np.zeros((dim_u, dim_u, dim_x))
+#       for j in range(dim_u):
+#         der_a = jax.ops.index_update(der_a, jax.ops.index[j,j,:], w[start_index+t-1-i])  
+#       ## Perform the einsum
+#       #second_term = np.einsum('ij,jkl->ikl', d_u, der_a)
+#       second_term = np.tensordot(d_u, der_a,1)
+#       der_x_next.append(first_term+second_term)
+
+#       ## Compute cost derivatives
+#       c_x, c_u, c_xx, c_ux, c_uu = task.cost_grad(x, a, 0)
+#       #cost_der_1 = np.einsum('i,ijk->jk', c_x, der_x[i])
+#       cost_der_1 = np.tensordot(c_x, der_x[i],1)
+#       #cost_der_2 = np.einsum('i,ijk->jk', c_u, der_a)
+#       cost_der_2 = np.tensordot(c_u, der_a,1)
+#       cost_der[i] = cost_der[i] + cost_der_1 + cost_der_2
+#     x = next_x
+#     der_x = der_x_next
+#   return cost_der
 
 
