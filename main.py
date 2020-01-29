@@ -24,8 +24,9 @@ action_size = 2
 quadrotor = PlanarQuadrotor()
 u0 = np.tile(quadrotor.hover_input, (quadrotor.h, 1)) + 0.0*jax.random.uniform(key, shape=(quadrotor.h, quadrotor.action_size), minval=-1.0)
 
-final_actions, costs, states = IPA(quadrotor, u0, 230, alg="ILC-CLOSED")
-print(costs)
+final_actions, costs, states, rollout_vals = IPA(quadrotor, u0, 2, alg="ILC-CLOSED")
+print(rollout_vals)
+print([float(c) for c in costs])
 print(states[-1])
 print("Rendering the found action now")
 # devs = [quadrotor.step(states[i], final_actions[i],1)[3] - quadrotor.step(states[i], final_actions[i], 1, is_real_dynamics=False)[3] for i in range(quadrotor.h)]

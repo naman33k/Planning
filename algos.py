@@ -101,6 +101,9 @@ def IPA(task, initial_actions, iters, alg="ILQR-FULL", alpha=1.0, backtracking_l
   IGPC_h = 3
   if alg=="IGPC":
     M = [np.zeros((dim_u, dim_x)) for i in range(IGPC_h)]
+  alpha_start = 0
+  total_rollout = 0
+  rollout_answers = []
   for i in range(iters):
     print("In iteration ", i)
     accepted = False
@@ -118,8 +121,9 @@ def IPA(task, initial_actions, iters, alg="ILQR-FULL", alpha=1.0, backtracking_l
     sol_k, sol_K = LQRSolver(cost_params, d_params, task.h, task.state_size, mu=mu)
     if backtracking_line_search:
       #print("In backtracking line search")
-      for alpha in alphas:
+      for alpha_num, alpha in enumerate(alphas[alpha_start:]):
         #print("Trying alpha ", alpha)
+        total_rollout = total_rollout + 1
         if alg=="ILQR-CE":
           us_new = rollout_for_actions(task, actions, sol_k, sol_K, states, alpha, mode=2)
           new_cost = trajectory_cost(task, us_new, is_real_dynamics=False)
@@ -146,10 +150,18 @@ def IPA(task, initial_actions, iters, alg="ILQR-FULL", alpha=1.0, backtracking_l
           if mu <= mu_min:
             mu = 0.0
           accepted = True
+          if alpha_start + alpha_num - 1 > 0:
+            alpha_start = alpha_start + alpha_num - 1
+          else:
+            alpha_start = 0
+          rollout_answers.append(total_rollout)
+          print("Next alpha start is", alpha_start)
+          print("Rollout Num is", total_rollout)
           #print("Accepting. Mu is ", mu)
           break
       if not accepted:
         # Increase regularization term.
+        rollout_answers.append(total_rollout)
         delta = max(1.0, delta) * delta_0
         mu = max(mu_min, mu * delta)
         #print("Nothing got accepted. Mu is now ", mu)
@@ -178,7 +190,7 @@ def IPA(task, initial_actions, iters, alg="ILQR-FULL", alpha=1.0, backtracking_l
     actions = us_new
   states, cost_params, d_params, total_cost = rollout(task, actions, is_real_dynamics=True,real_der=False)
 
-  return actions, cost_array, states
+  return actions, cost_array, states, rollout_answers
 
 def padded_w(w, l, d):
   if l==0:
